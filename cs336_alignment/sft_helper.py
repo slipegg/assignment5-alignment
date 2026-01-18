@@ -136,3 +136,35 @@ def masked_normalize(
     normalized = summed / normalize_constant
     return normalized
 
+def sft_microbatch_train_step(
+        policy_log_probs: torch.Tensor,
+        response_mask: torch.Tensor,
+        gradient_accumulation_steps: int,
+        normalize_constant: float = 1.0,
+) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+    """
+    One SFT microbatch step: masked NLL, batch-mean, normalize, grad-acc scaling, backward.
+    Args:
+        policy_log_probs (batch_size, sequence_length), per-token log-probabilities from the SFT policy being trained.
+        response_mask (batch_size, sequence_length), 1 for response tokens, 0 for prompt/padding.
+        gradient_accumulation_steps Number of microbatches per optimizer step.
+        normalize_constant The constant by which to divide the sum. It is fine to leave this as 1.0.
+    Returns:  
+        tuple[torch.Tensor, dict[str, torch.Tensor]].
+    """
+    per_example_nll = masked_normalize(policy_log_probs, response_mask, normalize_constant, 1) # (batch_size, Sequence_length) -> (batch_size,)
+
+    # batch mean
+    microbatch_loss = -1 * per_example_nll.mean()  # scalar
+
+    # scale for gradient accumulation
+    loss = microbatch_loss / float(gradient_accumulation_steps)
+
+    # backward
+    loss.backward()
+
+    metadata = {
+        "microbatch_loss": microbatch_loss.detach(),
+    }
+
+    return loss, metadata
