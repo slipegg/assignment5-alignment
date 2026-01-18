@@ -8,7 +8,7 @@ from torch import Tensor
 from torch.utils.data import Dataset
 from transformers import PreTrainedTokenizerBase
 
-from cs336_alignment.sft_helper import tokenize_prompt_and_output
+from cs336_alignment.sft_helper import tokenize_prompt_and_output, compute_entropy, get_response_log_probs
 
 def run_tokenize_prompt_and_output(
     prompt_strs: list[str],
@@ -83,7 +83,7 @@ def run_compute_group_normalized_rewards(
 
 def run_compute_entropy(logits: torch.Tensor) -> torch.Tensor:
     """Get the entropy of the logits (i.e., entropy of the final dimension)."""
-    raise NotImplementedError
+    return compute_entropy(logits)
 
 
 def run_get_response_log_probs(
@@ -115,7 +115,7 @@ def run_get_response_log_probs(
                 we have not masked out the token indices corresponding to the prompt
                 or padding; that is done in the train loop.
     """
-    raise NotImplementedError
+    return get_response_log_probs(model, input_ids, labels, return_token_entropy)
 
 
 def run_compute_naive_policy_gradient_loss(

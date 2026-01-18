@@ -60,3 +60,52 @@ def tokenize_prompt_and_output(
             response_mask[i, start:end] = 1
 
     return {"input_ids": input_ids, "labels": labels, "response_mask": response_mask}
+
+# test by `uv run pytest -k test_compute_entropy`
+def compute_entropy(logits: torch.Tensor) -> torch.Tensor:
+    """Computes the entropy of the categorical distribution defined by the logits.
+    Args:
+        logits: A tensor of shape (batch_size, seq_length, vocab_size) representing the logits.
+    Returns:
+        A tensor of shape (batch_size, seq_length) representing the entropy at each position.
+    """
+    # log Z = log sum exp logits
+    log_z = torch.logsumexp(logits, dim=-1)  # (batch_size, seq_length)
+
+    # sum p(x) log p(x) = sum exp(logits - log_z) * (logits - log_z)
+    probs = F.softmax(logits, dim=-1)  # (batch_size, seq_length, vocab_size)
+
+    # expected_logit = sum p(x) * log p(x)
+    expected_logit = torch.sum(probs * logits, dim=-1)  # (batch_size, seq_length)
+
+    # entropy = log Z - expected_logit
+    entropy = log_z - expected_logit  # (batch_size, seq_length)
+
+    return entropy
+
+# test by `uv run pytest -k test_get_response_log_probs`
+def get_response_log_probs(
+        model: torch.nn.Module,
+        input_ids: torch.Tensor,
+        labels: torch.Tensor,
+        return_token_entropy: bool = False,
+) -> Dict[str, torch.Tensor]:
+    # Forward to get logits (Batch, Seq Len, Vocab Size)
+    logits = model(input_ids).logits
+
+    logits_softmax = F.log_softmax(logits, dim=-1)  # (Batch, Seq Len, Vocab Size)
+
+    log_probs = torch.gather(
+        logits_softmax,
+        dim=-1,
+        index=labels.unsqueeze(-1)
+    ).squeeze(-1)  # (Batch, Seq Len)
+
+    result = {
+        "log_probs": log_probs,
+    }
+
+    if return_token_entropy:
+        result["token_entropy"] = compute_entropy(logits)
+
+    return result
