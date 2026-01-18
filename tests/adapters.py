@@ -8,7 +8,7 @@ from torch import Tensor
 from torch.utils.data import Dataset
 from transformers import PreTrainedTokenizerBase
 
-from cs336_alignment.sft_helper import tokenize_prompt_and_output, compute_entropy, get_response_log_probs, masked_normalize, sft_microbatch_train_step
+from cs336_alignment.helper import tokenize_prompt_and_output, compute_entropy, get_response_log_probs, masked_normalize, sft_microbatch_train_step
 
 def run_tokenize_prompt_and_output(
     prompt_strs: list[str],
