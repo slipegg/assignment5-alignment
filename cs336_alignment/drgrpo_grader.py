@@ -990,6 +990,14 @@ def extract_answer(passage: str) -> str:
 
 
 def grade(model_answer: str, gt_answer: str, fast: bool = True):
+    # --- type safety: dataset may store answers as int/float/None, or list elements may be non-str ---
+    if gt_answer is None or model_answer is None:
+        return False
+    if not isinstance(gt_answer, str):
+        gt_answer = str(gt_answer)
+    if not isinstance(model_answer, str):
+        model_answer = str(model_answer)
+        
     if "\\boxed" in gt_answer:
         gt_answer = extract_answer(gt_answer)
     correct = grade_answer_mathd(model_answer, gt_answer) or grade_answer_sympy(
