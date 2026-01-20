@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Callable, Literal
 from transformers import PreTrainedTokenizerBase
 import torch
 import torch.nn.functional as F
@@ -168,3 +168,126 @@ def sft_microbatch_train_step(
     }
 
     return loss, metadata
+
+################ REINFORCEMENT LEARNING HELPERS ################
+
+# test by `uv run pytest -k test_compute_group_normalized_rewards`
+def compute_group_normalized_rewards(
+        reward_fn: Callable[[str, str], Dict[str, float]],
+        rollout_responses: List[str],
+        repeated_ground_truths: List[str],
+        group_size: int,
+        advantage_eps: float,
+        normalize_by_std: bool,
+) -> Tuple[torch.Tensor, torch.Tensor, Dict[str, float]]:
+    """
+    Compute per-response rewards and group-normalized advantages.
+
+    Args:
+        reward_fn: Callable[[response, ground_truth], dict] returning keys:
+                  "reward", "format_reward", "answer_reward"
+        rollout_responses: list[str], length = rollout_batch_size
+        repeated_ground_truths: list[str], length = rollout_batch_size
+        group_size: int, number of responses per question
+        advantage_eps: float, small constant to avoid division by zero
+        normalize_by_std: bool, if True use (r-mean)/(std+eps) else (r-mean)
+
+    Returns:
+        advantages: torch.Tensor, shape (rollout_batch_size,)
+        raw_rewards: torch.Tensor, shape (rollout_batch_size,)
+        metadata: dict[str, float] with useful stats
+    """
+    assert len(rollout_responses) == len(repeated_ground_truths), "Inconsistent rollout responses and ground truths"
+
+    # Compute raw rewards
+    raw_rewards = []
+    for response, ground_truth in zip(rollout_responses, repeated_ground_truths):
+        reward = reward_fn(response, ground_truth)
+        raw_rewards.append(reward["reward"])
+    raw_rewards = torch.tensor(raw_rewards, dtype=torch.float32)
+
+    # Compute group-normalized advantages
+    group_num = len(rollout_responses) // group_size
+    reward_by_group = raw_rewards.view(group_num, group_size)
+    reward_mean = reward_by_group.mean(dim=1, keepdim=True)
+    if normalize_by_std:
+        reward_std = reward_by_group.std(dim=1, keepdim=True)
+        advantages = (reward_by_group - reward_mean) / (reward_std + advantage_eps)
+    else:
+        advantages = reward_by_group - reward_mean
+
+    advantages = advantages.view(-1)
+
+    return advantages, raw_rewards, {}
+
+# test by `uv run pytest -k test_compute_naive_policy_gradient_loss`
+def compute_naive_policy_gradient_loss(
+        raw_rewards_or_advantages: torch.Tensor,
+        policy_log_probs: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Compute per-token naive policy gradient loss:
+        loss_{b,t} = -A_b * log_prob_{b,t}
+
+    Args:
+        raw_rewards_or_advantages: Tensor of shape (batch_size, 1)
+        policy_log_probs: Tensor of shape (batch_size, sequence_length)
+
+    Returns:
+        Tensor of shape (batch_size, sequence_length)
+    """
+    assert raw_rewards_or_advantages.dim() == 1 or raw_rewards_or_advantages.dim() == 2, "raw_rewards_or_advantages must be 1D or 2D"
+    assert policy_log_probs.dim() == 2, "policy_log_probs must be 2D"
+    assert raw_rewards_or_advantages.size(0) == policy_log_probs.size(0), "Batch size mismatch"
+
+    advantages = raw_rewards_or_advantages.to(dtype=policy_log_probs.dtype, device=policy_log_probs.device)
+
+    return -1 * advantages * policy_log_probs
+
+# test by `uv run pytest -k test_compute_grpo_clip_loss`
+def compute_grpo_clip_loss(
+        advantages: torch.Tensor,
+        policy_log_probs: torch.Tensor,
+        old_log_probs: torch.Tensor,
+        cliprange: float,
+        loss_type: Literal["grpo_clip", "grpo_no_clip"] = "grpo_clip",
+) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+    """
+    Per-token GRPO-Clip loss:
+        loss_{b,t} = - min( r_{b,t} * A_b, clip(r_{b,t}, 1-eps, 1+eps) * A_b )
+
+    where r_{b,t} = exp(policy_log_probs - old_log_probs).
+
+    Args:
+        advantages: (B, 1)
+        policy_log_probs: (B, T)
+        old_log_probs: (B, T)
+        cliprange: eps
+
+    Returns:
+        loss: (B, T)
+        metadata: dict of tensors (e.g., is_clipped mask)
+    """
+    advantages = advantages.to(dtype=policy_log_probs.dtype, device=policy_log_probs.device)
+
+    ratios = torch.exp(policy_log_probs - old_log_probs)  # (B, T)
+    if loss_type == "grpo_clip":
+        unclipped_loss = ratios * advantages  # (B, T)
+        clipped_ratios = torch.clamp(ratios, 1.0 - cliprange, 1.0 + cliprange)  # (B, T)
+        clipped_loss = clipped_ratios * advantages  # (B, T)
+
+        loss = -1 * torch.min(unclipped_loss, clipped_loss)  # (B, T)
+
+        is_clipped = (clipped_loss < unclipped_loss).float()  # (B, T)
+
+        metadata = {
+            "is_clipped": is_clipped,
+        }
+        return loss, metadata
+    elif loss_type == "grpo_no_clip":
+        loss = -1 * ratios * advantages  # (B, T)
+        metadata = {}
+        return loss, metadata
+    else:
+        raise ValueError(f"Unknown loss_type: {loss_type}")
+
