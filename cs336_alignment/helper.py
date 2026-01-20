@@ -291,3 +291,47 @@ def compute_grpo_clip_loss(
     else:
         raise ValueError(f"Unknown loss_type: {loss_type}")
 
+def compute_policy_gradient_loss(
+        policy_log_probs: torch.Tensor,
+        loss_type: Literal["no_baseline", "reinforce_with_baseline", "grpo_clip","grpo_no_clip"],
+        raw_rewards: torch.Tensor | None = None,
+        advantages: torch.Tensor | None = None,
+        old_log_probs: torch.Tensor | None = None,
+        cliprange: float | None = None,
+) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+    """
+    Convenience wrapper to compute different policy-gradient losses.
+
+    Args:
+        policy_log_probs: (B, T) log-probabilities from current policy.
+        loss_type: "no_baseline" | "reinforce_with_baseline" | "grpo_clip"
+        raw_rewards: required if loss_type == "no_baseline", shape (B, 1)
+        advantages: required if loss_type in {"reinforce_with_baseline", "grpo_clip"}, shape (B, 1)
+        old_log_probs: required if loss_type == "grpo_clip", shape (B, T)
+        cliprange: required if loss_type == "grpo_clip", scalar eps
+
+    Returns:
+        loss: (B, T) per-token loss
+        metadata: dict[str, Tensor] auxiliary stats
+    """
+    assert loss_type in {"no_baseline", "reinforce_with_baseline", "grpo_clip","grpo_no_clip"}, f"Unknown loss_type: {loss_type}"
+    assert policy_log_probs.dim() == 2, "policy_log_probs must be 2D"
+
+    metadata = {}
+    if loss_type == "no_baseline":
+        loss = compute_naive_policy_gradient_loss(raw_rewards, policy_log_probs)
+    elif loss_type == "reinforce_with_baseline":
+        loss = compute_naive_policy_gradient_loss(advantages, policy_log_probs)
+    elif loss_type == "grpo_clip" or loss_type == "grpo_no_clip":
+        loss, pg_metadata = compute_grpo_clip_loss(
+            advantages,
+            policy_log_probs,
+            old_log_probs,
+            cliprange,
+            loss_type=loss_type,
+        )
+        metadata.update(pg_metadata)
+    else:
+        raise ValueError(f"Unknown loss_type: {loss_type}")
+    return loss, metadata
+

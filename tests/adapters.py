@@ -8,7 +8,7 @@ from torch import Tensor
 from torch.utils.data import Dataset
 from transformers import PreTrainedTokenizerBase
 
-from cs336_alignment.helper import tokenize_prompt_and_output, compute_entropy, get_response_log_probs, masked_normalize, sft_microbatch_train_step,compute_group_normalized_rewards, compute_naive_policy_gradient_loss, compute_grpo_clip_loss
+from cs336_alignment.helper import tokenize_prompt_and_output, compute_entropy, get_response_log_probs, masked_normalize, sft_microbatch_train_step,compute_group_normalized_rewards, compute_naive_policy_gradient_loss, compute_grpo_clip_loss, compute_policy_gradient_loss
 
 def run_tokenize_prompt_and_output(
     prompt_strs: list[str],
@@ -175,7 +175,7 @@ def run_compute_policy_gradient_loss(
     """
     Wrapper that delegates to the appropriate policy gradient loss function above.
     """
-    raise NotImplementedError
+    return compute_policy_gradient_loss(policy_log_probs, loss_type, raw_rewards, advantages, old_log_probs, cliprange)
 
 
 def run_masked_mean(tensor: torch.Tensor, mask: torch.Tensor, dim: int | None = None) -> torch.Tensor:
