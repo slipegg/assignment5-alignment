@@ -335,3 +335,29 @@ def compute_policy_gradient_loss(
         raise ValueError(f"Unknown loss_type: {loss_type}")
     return loss, metadata
 
+def masked_mean(
+        tensor: torch.Tensor,
+        mask: torch.Tensor,
+        dim: int | None = None,
+) -> torch.Tensor:
+    """
+    Compute mean of `tensor` considering only elements where mask == 1.
+
+    Args:
+        tensor: torch.Tensor, data to average
+        mask: torch.Tensor, same shape as tensor; 1/True positions included
+        dim: int or None. If None, mean over all masked elements.
+
+    Returns:
+        torch.Tensor, masked mean with semantics like tensor.mean(dim)
+    """
+    assert tensor.shape == mask.shape, "tensor and mask must have the same shape"
+    
+    if dim is None:
+        masked_sum = torch.sum(tensor * mask)
+        length = torch.sum(mask)
+        return masked_sum / (length)
+    else:
+        masked_sum = torch.sum(tensor * mask, dim=dim)
+        length = torch.sum(mask, dim=dim)
+        return masked_sum / (length)
