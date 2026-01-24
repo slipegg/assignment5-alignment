@@ -37,6 +37,8 @@ def evaluate_vllm(
     sum_format = 0.0
     sum_answer = 0.0
     sum_reward = 0.0
+    sum_correct_avg_length = 0.0
+    sum_incorrect_avg_length = 0.0
     combo_counts = Counter()
 
     with open(out_jsonl_path, "w", encoding="utf-8") as f:
@@ -54,6 +56,10 @@ def evaluate_vllm(
             sum_format += float(scores.get("format_reward", 0.0))
             sum_answer += float(scores.get("answer_reward", 0.0))
             sum_reward += float(scores.get("reward", 0.0))
+            if fr == 1 and ar == 1:
+                sum_correct_avg_length += len(gen_text)
+            else:
+                sum_incorrect_avg_length += len(gen_text)
 
             rec = {
                 "idx": i,
@@ -78,5 +84,7 @@ def evaluate_vllm(
         "answer_accuracy": (sum_answer / n) if n else 0.0,
         "reward_mean": (sum_reward / n) if n else 0.0,
         "counts": combo_table,
+        "correct_avg_length": (sum_correct_avg_length / combo_counts[(1, 1)]) if combo_counts[(1, 1)] else 0.0,
+        "incorrect_avg_length": (sum_incorrect_avg_length / (n - combo_counts[(1, 1)])) if (n - combo_counts[(1, 1)]) else 0.0,
     }
     return metrics
