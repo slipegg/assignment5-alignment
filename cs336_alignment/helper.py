@@ -201,10 +201,16 @@ def compute_group_normalized_rewards(
 
     # Compute raw rewards
     raw_rewards = []
+    raw_format_rewards = []
+    raw_answer_rewards =[]
     for response, ground_truth in zip(rollout_responses, repeated_ground_truths):
         reward = reward_fn(response, ground_truth)
         raw_rewards.append(reward["reward"])
+        raw_format_rewards.append(reward["format_reward"])
+        raw_answer_rewards.append(reward['answer_reward'])
     raw_rewards = torch.tensor(raw_rewards, dtype=torch.float32)
+    raw_format_rewards = torch.tensor(raw_format_rewards, dtype=torch.float32)
+    raw_answer_rewards = torch.tensor(raw_answer_rewards, dtype=torch.float32)
 
     # Compute group-normalized advantages
     group_num = len(rollout_responses) // group_size
@@ -218,7 +224,14 @@ def compute_group_normalized_rewards(
 
     advantages = advantages.view(-1)
 
-    return advantages, raw_rewards, {}
+    metadata = {
+        "raw_reward_mean": raw_rewards.mean().item(),
+        "raw_reward_std": raw_rewards.std(unbiased=False).item() if raw_rewards.numel() > 0 else 0.0,
+        "raw_format_reward_mean":  raw_format_rewards.mean().item(),
+        "raw_answer_reward_mean":  raw_answer_rewards.mean().item(),
+    }
+
+    return advantages, raw_rewards, metadata
 
 # test by `uv run pytest -k test_compute_naive_policy_gradient_loss`
 def compute_naive_policy_gradient_loss(
