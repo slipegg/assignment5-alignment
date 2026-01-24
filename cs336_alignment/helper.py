@@ -361,3 +361,60 @@ def masked_mean(
         masked_sum = torch.sum(tensor * mask, dim=dim)
         length = torch.sum(mask, dim=dim)
         return masked_sum / (length)
+
+def grpo_microbatch_train_step(
+        policy_log_probs: torch.Tensor,
+        response_mask: torch.Tensor,
+        gradient_accumulation_steps: int,
+        loss_type: Literal["no_baseline", "reinforce_with_baseline", "grpo_clip","grpo_no_clip"],
+        raw_rewards: torch.Tensor | None = None,
+        advantages: torch.Tensor | None = None,
+        old_log_probs: torch.Tensor | None = None,
+        cliprange: float | None = None,
+        length_norm: Literal["masked_mean", "masked_normalize"] = "masked_mean",
+) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+    """
+    Execute one GRPO microbatch forward+backward step.
+
+    Steps:
+      1) compute per-token PG loss (B,T)
+      2) masked_mean over response tokens -> per-example loss (B,)
+      3) batch mean -> microbatch_loss (scalar)
+      4) scale by gradient_accumulation_steps
+      5) backward
+    """
+    # 1) compute per-token PG loss
+    pg_loss, pg_metadata = compute_policy_gradient_loss(
+        policy_log_probs,
+        loss_type,
+        raw_rewards,
+        advantages,
+        old_log_probs,
+        cliprange,
+    )  # (B, T)
+
+    # 2) masked_mean over response tokens -> per-example loss (B,)
+    if length_norm == "masked_mean":
+        per_example_loss = masked_mean(pg_loss, response_mask, dim=1)  # (B,)
+    elif length_norm == "masked_normalize":
+        per_example_loss = masked_normalize(pg_loss, response_mask, normalize_constant=1024, dim=1)  # (B,)
+    else:
+        raise ValueError(f"Unknown length_norm: {length_norm}")
+    
+    # 3) batch mean -> microbatch_loss (scalar)
+    microbatch_loss = per_example_loss.mean()  # scalar
+
+    # 4) scale by gradient_accumulation_steps
+    loss = microbatch_loss / float(gradient_accumulation_steps)
+
+    # 5) backward
+    loss.backward()
+
+    metadata = {
+        "microbatch_loss": microbatch_loss.detach(),
+        "per_example_loss_mean": per_example_loss.detach().mean(),
+        "per_example_loss_std": per_example_loss.detach().std(unbiased=False) if per_example_loss.numel() > 1 else torch.zeros((), device=per_example_loss.device)
+    }
+    metadata.update(pg_metadata)
+
+    return loss, metadata
